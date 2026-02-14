@@ -18,30 +18,22 @@ from ..utils.export_predictions import export_predictions
 from ..visualization.viz2d import plot_cumulative
 from .eval_pipeline import EvalPipeline
 from .io import get_eval_parser, load_model, parse_eval_args
-from .utils import (
-    eval_matches_depth,
-    eval_matches_epipolar,
-    eval_poses,
-    eval_relative_pose_robust,
-)
+from .utils import eval_matches_epipolar, eval_poses, eval_relative_pose_robust
 
 logger = logging.getLogger(__name__)
 
 
-class MegaDepth1500Pipeline(EvalPipeline):
+class ScanNet1500Pipeline(EvalPipeline):
     default_conf = {
         "data": {
-            "name": "posed_images",
-            "root": "",
-            "image_dir": "{scene}/images",
-            "depth_dir": "{scene}/depths",
-            "views": "{scene}/views.txt",
-            "view_groups": "{scene}/pairs.txt",
-            "depth_format": "h5",
-            "scene_list": ["megadepth1500"],
+            "name": "image_pairs",
+            "pairs": "scannet1500/pairs_calibrated.txt",
+            "root": "scannet1500/",
+            "extra_data": "relative_pose",
             "preprocessing": {
                 "side": "long",
             },
+            "num_workers": 14,
         },
         "model": {
             "ground_truth": {
@@ -49,7 +41,7 @@ class MegaDepth1500Pipeline(EvalPipeline):
             }
         },
         "eval": {
-            "estimator": "poselib",
+            "estimator": "opencv",
             "ransac_th": 1.0,  # -1 runs a bunch of thresholds and selects the best
         },
     }
@@ -67,9 +59,9 @@ class MegaDepth1500Pipeline(EvalPipeline):
     optional_export_keys = []
 
     def _init(self, conf):
-        if not (DATA_PATH / "megadepth1500").exists():
-            logger.info("Downloading the MegaDepth-1500 dataset.")
-            url = "https://cvg-data.inf.ethz.ch/megadepth/megadepth1500.zip"
+        if not (DATA_PATH / "scannet1500").exists():
+            logger.info("Downloading the ScanNet-1500 dataset.")
+            url = "https://cvg-data.inf.ethz.ch/scannet/scannet1500.zip"
             zip_path = DATA_PATH / url.rsplit("/", 1)[-1]
             zip_path.parent.mkdir(exist_ok=True, parents=True)
             torch.hub.download_url_to_file(url, zip_path)
@@ -114,8 +106,6 @@ class MegaDepth1500Pipeline(EvalPipeline):
             pred = cache_loader(data)
             # add custom evaluations here
             results_i = eval_matches_epipolar(data, pred)
-            if "depth" in data["view0"].keys():
-                results_i.update(eval_matches_depth(data, pred))
             for th in test_thresholds:
                 pose_results_i = eval_relative_pose_robust(
                     data,
@@ -128,6 +118,9 @@ class MegaDepth1500Pipeline(EvalPipeline):
             results_i["names"] = data["name"][0]
             if "scene" in data.keys():
                 results_i["scenes"] = data["scene"][0]
+
+            if "overlap" in data.keys():
+                results_i["overlap"] = data["overlap"][0].item()
 
             for k, v in results_i.items():
                 results[k].append(v)
@@ -169,7 +162,7 @@ if __name__ == "__main__":
     parser = get_eval_parser()
     args = parser.parse_intermixed_args()
 
-    default_conf = OmegaConf.create(MegaDepth1500Pipeline.default_conf)
+    default_conf = OmegaConf.create(ScanNet1500Pipeline.default_conf)
 
     # mingle paths
     output_dir = Path(EVAL_PATH, dataset_name)
@@ -185,7 +178,7 @@ if __name__ == "__main__":
     experiment_dir = output_dir / name
     experiment_dir.mkdir(exist_ok=True)
 
-    pipeline = MegaDepth1500Pipeline(conf)
+    pipeline = ScanNet1500Pipeline(conf)
     s, f, r = pipeline.run(
         experiment_dir,
         overwrite=args.overwrite,
